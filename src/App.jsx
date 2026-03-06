@@ -536,26 +536,98 @@ function App() {
       const data = await res.json()
       setDriveConnected(data.googleDrive || false)
       setNotionConnected(data.notion || false)
-      const notionConn = (data.connections || []).find(c => c.provider === 'notion')
-      if (notionConn?.email) setNotionWorkspace(notionConn.email)
+      if (data.notionWorkspace) setNotionWorkspace(data.notionWorkspace)
     } catch (e) {
       console.error('[INTEGRATIONS] Status check failed:', e.message)
     }
   }
 
   // ─── HANDLE OAUTH REDIRECTS ───
+  // ─── HANDLE OAUTH REDIRECTS ───
+  // On redirect: save OAuth data to sessionStorage, then exchange when user is ready
   useEffect(() => {
     const params = new URLSearchParams(window.location.search)
-    const integration = params.get('integration')
-    const status = params.get('status')
-    if (integration && status) {
+    const code = params.get('code')
+    const stateRaw = params.get('state')
+    const scope = params.get('scope') || ''
+
+    if (code) {
+      // Save to sessionStorage so it survives the URL cleanup and auth loading
+      sessionStorage.setItem('fleabot_oauth', JSON.stringify({ code, state: stateRaw, scope }))
       window.history.replaceState({}, '', window.location.pathname)
-      if (status === 'success') {
-        if (integration === 'google-drive') setDriveConnected(true)
-        if (integration === 'notion') setNotionConnected(true)
-      }
     }
   }, [])
+
+  // Process saved OAuth data once user is authenticated
+  useEffect(() => {
+    if (!user) return
+
+    const saved = sessionStorage.getItem('fleabot_oauth')
+    if (!saved) return
+    sessionStorage.removeItem('fleabot_oauth')
+
+    const { code, state: stateRaw, scope } = JSON.parse(saved)
+    if (!code) return
+
+    const exchangeToken = async () => {
+      let provider = null
+      let stateUserId = user.uid
+
+      if (stateRaw) {
+        try {
+          const parsed = JSON.parse(stateRaw)
+          provider = parsed.provider || null
+          stateUserId = parsed.userId || user.uid
+        } catch {
+          stateUserId = stateRaw
+        }
+      }
+
+      // Detect provider from scope if not in state
+      if (!provider && scope.includes('drive')) provider = 'google-drive'
+      if (!provider && stateRaw && !scope) provider = 'notion'
+
+      console.log(`[OAUTH] Provider: ${provider}, code: yes, userId: ${stateUserId}`)
+
+      if (provider === 'google-drive') {
+        try {
+          const res = await fetch(`${BACKEND_URL}/connections/google-drive/callback`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ userId: stateUserId, code }),
+          })
+          const data = await res.json()
+          console.log('[DRIVE] Token exchange result:', data)
+          if (data.ok) {
+            setDriveConnected(true)
+            // Refresh integration status
+            checkIntegrationStatus(user.uid)
+          }
+        } catch (e) {
+          console.error('[DRIVE] Token exchange failed:', e.message)
+        }
+      } else if (provider === 'notion') {
+        try {
+          const res = await fetch(`${BACKEND_URL}/connections/notion/callback`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ userId: stateUserId, code }),
+          })
+          const data = await res.json()
+          console.log('[NOTION] Token exchange result:', data)
+          if (data.ok) {
+            setNotionConnected(true)
+            if (data.workspaceName) setNotionWorkspace(data.workspaceName)
+            checkIntegrationStatus(user.uid)
+          }
+        } catch (e) {
+          console.error('[NOTION] Token exchange failed:', e.message)
+        }
+      }
+    }
+
+    exchangeToken()
+  }, [user])
 
   // ─── SCROLL TO BOTTOM ───
   const scrollToBottom = () => {
@@ -618,7 +690,7 @@ function App() {
     await signOut(auth)
   }
 
-  // ─── INTEGRATION HANDLERS (via Supermemory connectors) ───
+  // ─── INTEGRATION HANDLERS (Google Drive & Notion OAuth) ───
   const connectProvider = async (provider) => {
     try {
       const res = await fetch(`${BACKEND_URL}/connections/create`, {

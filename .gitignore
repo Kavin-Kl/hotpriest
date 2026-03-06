@@ -12,6 +12,7 @@ dist
 dist-ssr
 *.local
 .env
+.fleabot-cache
 
 # Editor directories and files
 .vscode/*
