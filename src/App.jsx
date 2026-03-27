@@ -476,7 +476,6 @@ function App() {
   const [onboardingSelected, setOnboardingSelected] = useState([])
 
   // Integration state
-  const [driveConnected, setDriveConnected] = useState(false)
   const [notionConnected, setNotionConnected] = useState(false)
   const [notionWorkspace, setNotionWorkspace] = useState(null)
   const [integrationsOpen, setIntegrationsOpen] = useState(true)
